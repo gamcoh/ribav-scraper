@@ -1,17 +1,16 @@
+use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
+use encoding_rs::WINDOWS_1252;
+use futures::future::join_all;
 use reqwest::{header, Client};
-use scraper::Html;
+use scraper::{Html, Selector};
 use std::collections::HashMap;
-use std::error::Error;
+use tokio::{self};
 
-fn number_days_since_2020() -> i64 {
-    let today = Utc::now();
-    let start_of_2020 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+use tracing::{info, warn, Level};
 
-    let duration = today - start_of_2020;
-
-    duration.num_days()
-}
+const MAX_PAGES: u16 = 5;
+const PAGE_SIZE: u16 = 50;
 
 #[derive(Debug)]
 struct Post {
@@ -21,44 +20,72 @@ struct Post {
     views: u32,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
-    let client = Client::builder().cookie_store(true).build()?;
+fn number_days_since_2020() -> i64 {
+    let today = Utc::now();
+    let start_of_2020 = Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap();
+    (today - start_of_2020).num_days()
+}
+
+#[tokio::main(flavor = "current_thread")] // Use current_thread runtime for blocking operations
+async fn main() -> Result<()> {
+    // Initialize logging
+    tracing_subscriber::FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .init();
+
+    // Build a reqwest client with a timeout to be more production-ready
+    let client = Client::builder()
+        .cookie_store(true)
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("Failed to build HTTP client")?;
+
     let url = "https://www.techouvot.com/search.php?mode=results";
     let base_url = "https://www.techouvot.com/";
     let mut posts = HashMap::new();
 
-    let mut page = 0;
+    let page = 0;
+    let doc = get_html(&client, url)
+        .await
+        .context("Failed to get initial HTML page")?;
 
-    let mut doc = get_html(&client, url).await.expect("Failed to get HTML");
-    while let Some(next_page_url) = find_next_page(&doc, page) {
+    let next_page_url = find_next_page(&doc).ok_or_else(|| {
+        warn!("No next page found");
+        anyhow::anyhow!("No next page found")
+    })?;
+
+    let urls = (0..MAX_PAGES)
+        .map(|page| {
+            let next_url = format!("{}{}&start={}", base_url, next_page_url, page * PAGE_SIZE);
+            info!("Next URL: {}", next_url);
+            next_url
+        })
+        .collect::<Vec<_>>();
+
+    let docs = join_all(
+        urls.iter()
+            .map(|url| get_html(&client, url))
+            .collect::<Vec<_>>(),
+    )
+    .await;
+
+    for doc in docs {
         posts.extend(
-            get_posts_from_current_page(&doc)
+            get_posts_from_current_page(&doc?)
                 .await
-                .expect("Failed to get posts"),
+                .with_context(|| format!("Failed to extract posts from page {}", page))?,
         );
-
-        let next_url = format!("{}{}", base_url, next_page_url);
-        println!("Next URL: {}", next_url);
-        doc = get_html(&client, &next_url)
-            .await
-            .expect("Failed to get HTML");
-        page += 1;
-
-        if page > 5 {
-            break;
-        }
     }
 
     dbg!(&posts.len());
 
+    info!("Total posts found: {}", posts.len());
     Ok(())
 }
 
-async fn get_html(client: &Client, url: &str) -> Result<Html, Box<dyn Error>> {
-    let response;
-    if url.contains("search.php?search_id") {
-        response = client.get(url).send().await?;
+async fn get_html(client: &Client, url: &str) -> Result<Html> {
+    let response = if url.contains("search.php?search_id") {
+        client.get(url).send().await?
     } else {
         let mut headers = header::HeaderMap::new();
         headers.insert(
@@ -67,18 +94,25 @@ async fn get_html(client: &Client, url: &str) -> Result<Html, Box<dyn Error>> {
         );
 
         let days_since_2020 = number_days_since_2020();
-        let body = format!( "search_keywords=&search_terms=any&search_author=Rav+Binyamin+Wattenberg&search_forum=-1&search_time={}&search_fields=all&search_cat=-1&sort_by=0&sort_dir=DESC&show_results=topics&return_chars=200", days_since_2020);
+        let body = format!("search_keywords=&search_terms=any&search_author=Rav+Binyamin+Wattenberg&search_forum=-1&search_time={days}&search_fields=all&search_cat=-1&sort_by=0&sort_dir=DESC&show_results=topics&return_chars=200",
+            days = days_since_2020
+        );
 
-        response = client.post(url).headers(headers).body(body).send().await?;
+        client.post(url).headers(headers).body(body).send().await?
+    };
+
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "Non-success HTTP status: {}",
+            response.status()
+        ));
     }
 
-    assert!(response.status().is_success());
     let res_bytes = response.bytes().await?;
     let response_text = match String::from_utf8(res_bytes.to_vec()) {
         Ok(text) => text,
         Err(_) => {
-            // Fallback: Assume the response might have a different encoding
-            use encoding_rs::WINDOWS_1252;
+            // Attempt fallback encoding
             let (decoded_text, _, _) = WINDOWS_1252.decode(&res_bytes);
             decoded_text.to_string()
         }
@@ -87,31 +121,75 @@ async fn get_html(client: &Client, url: &str) -> Result<Html, Box<dyn Error>> {
     Ok(Html::parse_document(&response_text))
 }
 
-async fn get_posts_from_current_page(html: &Html) -> Result<HashMap<String, Post>, Box<dyn Error>> {
+async fn get_posts_from_current_page(html: &Html) -> Result<HashMap<String, Post>> {
     let mut posts = HashMap::new();
 
-    let table_rows_selector = scraper::Selector::parse("table.forumline tr")?;
+    let table_rows_selector = Selector::parse("table.forumline tr")
+        .map_err(|e| anyhow::anyhow!("Failed to parse row selector: {}", e))?;
 
-    let table_rows = html.select(&table_rows_selector);
-    for row in table_rows.skip(1) {
-        let cells_selector = scraper::Selector::parse("td")?;
-        let [_, forum_cell, title_cell, _, responses_cell, views_cell, _] =
-            row.select(&cells_selector).collect::<Vec<_>>()[..]
-        else {
+    let cells_selector = Selector::parse("td")
+        .map_err(|e| anyhow::anyhow!("Failed to parse cell selector: {}", e))?;
+
+    let link_selector = Selector::parse("a")
+        .map_err(|e| anyhow::anyhow!("Failed to parse link selector: {}", e))?;
+
+    // Skip the first row if it's a header (adjust as needed)
+    let table_rows = html.select(&table_rows_selector).skip(1);
+
+    for row in table_rows {
+        // Extracting cells
+        let cells: Vec<_> = row.select(&cells_selector).collect();
+        if cells.len() < 7 {
+            // Not a valid row
             continue;
+        }
+
+        let forum_cell = &cells[1];
+        let title_cell = &cells[2];
+        let responses_cell = &cells[4];
+        let views_cell = &cells[5];
+
+        let forum_link = match forum_cell.select(&link_selector).next() {
+            Some(link) => link,
+            None => {
+                warn!("No forum link found in cell");
+                continue;
+            }
+        };
+        let title_link = match title_cell.select(&link_selector).next() {
+            Some(link) => link,
+            None => {
+                warn!("No title link found in cell");
+                continue;
+            }
         };
 
-        let link_selector = scraper::Selector::parse("a")?;
-        let forum_link = forum_cell.select(&link_selector).next().unwrap();
-        let title_link = title_cell.select(&link_selector).next().unwrap();
-        let responses = responses_cell.text().collect::<String>().parse::<u32>()?;
-        let views = views_cell.text().collect::<String>().parse::<u32>()?;
+        let responses_text = responses_cell.text().collect::<String>();
+        let views_text = views_cell.text().collect::<String>();
+
+        let responses = responses_text
+            .parse::<u32>()
+            .with_context(|| format!("Failed to parse responses: {}", responses_text))?;
+        let views = views_text
+            .parse::<u32>()
+            .with_context(|| format!("Failed to parse views: {}", views_text))?;
+
+        let href = match title_link.value().attr("href") {
+            Some(h) => h.to_string(),
+            None => {
+                warn!("Title link does not have href attribute");
+                continue;
+            }
+        };
+
+        let title = title_link.text().collect::<String>();
+        let forum = forum_link.text().collect::<String>();
 
         posts.insert(
-            title_link.attr("href").unwrap().to_string(),
+            href,
             Post {
-                title: title_link.text().collect(),
-                forum: forum_link.text().collect(),
+                title,
+                forum,
                 responses,
                 views,
             },
@@ -121,14 +199,14 @@ async fn get_posts_from_current_page(html: &Html) -> Result<HashMap<String, Post
     Ok(posts)
 }
 
-fn find_next_page(html: &Html, page: u8) -> Option<String> {
-    let next_page_selector =
-        scraper::Selector::parse(".nav a[href^=\"search.php?search_id\"]").ok()?;
+fn find_next_page(html: &Html) -> Option<&str> {
+    // Find the next page link
+    let next_page_selector = Selector::parse(".nav a[href^=\"search.php?search_id\"]").ok()?;
     let next_page_link = html.select(&next_page_selector).next()?;
 
-    // Remove the `&start=` query parameter from the link
-    let next_page_link = next_page_link.value().attr("href")?;
-    let next_page_link = next_page_link.split('&').next()?;
+    let href = next_page_link.value().attr("href")?;
+    let base_link = href.split('&').next()?;
 
-    Some(format!("{}&start={}", next_page_link, page * 50))
+    // Add &start parameter to navigate pages
+    Some(base_link)
 }
