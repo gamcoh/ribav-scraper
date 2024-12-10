@@ -9,15 +9,17 @@ use tokio::{self};
 
 use tracing::{info, warn, Level};
 
-const MAX_PAGES: u16 = 5;
+const MAX_PAGES: u16 = 1;
 const PAGE_SIZE: u16 = 50;
+const BASE_URL: &str = "https://www.techouvot.com/";
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct Post {
     title: String,
     forum: String,
     responses: u32,
     views: u32,
+    html: Option<Html>,
 }
 
 fn number_days_since_2020() -> i64 {
@@ -41,11 +43,10 @@ async fn main() -> Result<()> {
         .context("Failed to build HTTP client")?;
 
     let url = "https://www.techouvot.com/search.php?mode=results";
-    let base_url = "https://www.techouvot.com/";
     let mut posts = HashMap::new();
 
     let page = 0;
-    let doc = get_html(&client, url)
+    let (doc, _) = get_html(&client, url)
         .await
         .context("Failed to get initial HTML page")?;
 
@@ -56,7 +57,7 @@ async fn main() -> Result<()> {
 
     let urls = (0..MAX_PAGES)
         .map(|page| {
-            let next_url = format!("{}{}&start={}", base_url, next_page_url, page * PAGE_SIZE);
+            let next_url = format!("{}{}&start={}", BASE_URL, next_page_url, page * PAGE_SIZE);
             info!("Next URL: {}", next_url);
             next_url
         })
@@ -71,20 +72,37 @@ async fn main() -> Result<()> {
 
     for doc in docs {
         posts.extend(
-            get_posts_from_current_page(&doc?)
+            get_posts_from_current_page(&(doc?).0)
                 .await
                 .with_context(|| format!("Failed to extract posts from page {}", page))?,
         );
     }
 
-    dbg!(&posts.len());
+    // Now let's fetch the HTML for each post and store it in the Post struct
+    let post_urls = posts.keys().cloned().collect::<Vec<_>>();
+    let post_fetches = post_urls
+        .iter()
+        .map(|url| get_html(&client, url))
+        .collect::<Vec<_>>();
+
+    for post_doc in join_all(post_fetches).await {
+        let (doc, url) = post_doc?;
+        info!("Fetched HTML for post: {}", url);
+        let post = posts.get_mut((*url).as_str()).unwrap();
+        post.html = Some(doc);
+    }
 
     info!("Total posts found: {}", posts.len());
     Ok(())
 }
 
-async fn get_html(client: &Client, url: &str) -> Result<Html> {
-    let response = if url.contains("search.php?search_id") {
+async fn get_html<S>(client: &Client, url: S) -> Result<(Html, S)>
+where
+    S: reqwest::IntoUrl + Clone,
+{
+    let url_cloned = url.clone();
+
+    let response = if url.as_str().contains("search.php?search_id") {
         client.get(url).send().await?
     } else {
         let mut headers = header::HeaderMap::new();
@@ -118,7 +136,7 @@ async fn get_html(client: &Client, url: &str) -> Result<Html> {
         }
     };
 
-    Ok(Html::parse_document(&response_text))
+    Ok((Html::parse_document(&response_text), url_cloned))
 }
 
 async fn get_posts_from_current_page(html: &Html) -> Result<HashMap<String, Post>> {
@@ -186,12 +204,13 @@ async fn get_posts_from_current_page(html: &Html) -> Result<HashMap<String, Post
         let forum = forum_link.text().collect::<String>();
 
         posts.insert(
-            href,
+            format!("{}{}", BASE_URL, href),
             Post {
                 title,
                 forum,
                 responses,
                 views,
+                ..Default::default()
             },
         );
     }
