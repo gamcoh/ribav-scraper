@@ -59,7 +59,9 @@ impl Into<Vec<Run<'_>>> for PostMessage {
         let mut paragraphs = Vec::new();
         let mut children = container.descendants();
 
+        let mut index = 0;
         while let Some(node) = children.next() {
+            index += 1;
             match node.value() {
                 Node::Text(text) => {
                     let text = text.text.trim();
@@ -68,6 +70,9 @@ impl Into<Vec<Run<'_>>> for PostMessage {
                 Node::Element(ref _elem) => {
                     let el = ElementRef::wrap(node);
                     paragraphs.extend(parse_html_to_docx_format(el));
+                    if el.unwrap().value().name().ne("br") && index > 1 {
+                        children.next();
+                    }
                 }
                 _ => {
                     info!("Unknown node: {:?}", node);
@@ -117,9 +122,12 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                 Run::default()
                     .property(
                         CharacterProperty::default()
-                            .bold(*properties.get("font-weight").unwrap_or(&"") == "bold"),
+                            .bold(*properties.get("font-weight").unwrap_or(&"") == "bold")
+                            .italics(*properties.get("font-style").unwrap_or(&"") == "italic"),
                     )
-                    .push_text(text),
+                    .push_text(" ")
+                    .push_text(text)
+                    .push_text(" "),
             );
         }
         _ => {
