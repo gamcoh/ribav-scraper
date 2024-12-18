@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
-use docx_rust::document::{Paragraph, Run};
+use docx_rust::document::{Paragraph, Run, TextSpace};
 use docx_rust::formatting::{CharacterProperty, ParagraphProperty, Spacing};
 use docx_rust::Docx;
 use encoding_rs::WINDOWS_1252;
@@ -57,8 +57,13 @@ impl Into<Vec<Paragraph<'_>>> for PostMessage {
             .unwrap();
 
         let mut paragraphs = Vec::new();
-        let mut s = Spacing::default();
-        s.after = Some(0);
+        let s = Spacing {
+            before: Some(0),
+            after: Some(0),
+            after_lines: Some(0),
+            before_lines: Some(0),
+            ..Default::default()
+        };
 
         let mut children = container.descendants();
         while let Some(node) = children.next() {
@@ -67,11 +72,7 @@ impl Into<Vec<Paragraph<'_>>> for PostMessage {
                     let text = text.text.trim();
                     paragraphs.push(
                         Paragraph::default()
-                            .push(
-                                Run::default()
-                                    .property(CharacterProperty::default())
-                                    .push_text(text.to_owned()),
-                            )
+                            .push_text(text.to_owned())
                             .property(ParagraphProperty::default().spacing(s.clone())),
                     );
                 }
@@ -83,7 +84,7 @@ impl Into<Vec<Paragraph<'_>>> for PostMessage {
                     // children.next();
                 }
                 _ => {
-                    println!("Unknown node: {:?}", node);
+                    info!("Unknown node: {:?}", node);
                 }
             }
         }
@@ -101,12 +102,11 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>, s: Spacing) -> Vec<Para
 
     match el.unwrap().value().name() {
         "div" => {
-            println!("Div found");
+            info!("Div found");
         }
-        // "br" => {
-        //     Paragraph::default()
-        //         .push(Run::default().push_text(("\n", TextSpace::Preserve)));
-        // }
+        "br" => {
+            Paragraph::default().push(Run::default().push_text(("\n", TextSpace::Preserve)));
+        }
         "span" => {
             let properties = el
                 .unwrap()
@@ -137,7 +137,7 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>, s: Spacing) -> Vec<Para
             );
         }
         _ => {
-            println!("Unknown tag: {}", el.unwrap().value().name());
+            info!("Unknown tag: {}", el.unwrap().value().name());
         }
     }
 
