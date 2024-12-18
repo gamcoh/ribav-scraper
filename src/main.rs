@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
-use docx_rust::document::{Paragraph, Run, TextSpace};
+use docx_rust::document::{BreakType, Paragraph, Run, TextSpace};
 use docx_rust::formatting::{CharacterProperty, ParagraphProperty, Spacing};
 use docx_rust::Docx;
 use encoding_rs::WINDOWS_1252;
@@ -48,8 +48,8 @@ struct PostMessage {
     message: String,
 }
 
-impl Into<Vec<Paragraph<'_>>> for PostMessage {
-    fn into(self) -> Vec<Paragraph<'static>> {
+impl Into<Vec<Run<'_>>> for PostMessage {
+    fn into(self) -> Vec<Run<'static>> {
         let html = Html::parse_fragment(&self.message);
         let container = html
             .select(&Selector::parse(".postrow-message").unwrap())
@@ -57,31 +57,17 @@ impl Into<Vec<Paragraph<'_>>> for PostMessage {
             .unwrap();
 
         let mut paragraphs = Vec::new();
-        let s = Spacing {
-            before: Some(0),
-            after: Some(0),
-            after_lines: Some(0),
-            before_lines: Some(0),
-            ..Default::default()
-        };
-
         let mut children = container.descendants();
+
         while let Some(node) = children.next() {
             match node.value() {
                 Node::Text(text) => {
                     let text = text.text.trim();
-                    paragraphs.push(
-                        Paragraph::default()
-                            .push_text(text.to_owned())
-                            .property(ParagraphProperty::default().spacing(s.clone())),
-                    );
+                    paragraphs.push(Run::default().push_text(text.to_owned()));
                 }
                 Node::Element(ref _elem) => {
                     let el = ElementRef::wrap(node);
-                    paragraphs.extend(parse_html_to_docx_format(el, s.clone()));
-
-                    // If the node is an element, we need to consume the next node.
-                    // children.next();
+                    paragraphs.extend(parse_html_to_docx_format(el));
                 }
                 _ => {
                     info!("Unknown node: {:?}", node);
@@ -93,7 +79,7 @@ impl Into<Vec<Paragraph<'_>>> for PostMessage {
     }
 }
 
-fn parse_html_to_docx_format<'a>(el: Option<ElementRef>, s: Spacing) -> Vec<Paragraph<'a>> {
+fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
     let mut paragraphs = Vec::new();
 
     if el.is_none() {
@@ -105,7 +91,11 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>, s: Spacing) -> Vec<Para
             info!("Div found");
         }
         "br" => {
-            Paragraph::default().push(Run::default().push_text(("\n", TextSpace::Preserve)));
+            paragraphs.push(
+                Run::default()
+                    .push_text("")
+                    .push_break(BreakType::TextWrapping),
+            );
         }
         "span" => {
             let properties = el
@@ -124,16 +114,12 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>, s: Spacing) -> Vec<Para
             let text = el.unwrap().text().collect::<String>();
 
             paragraphs.push(
-                Paragraph::default()
-                    .push(
-                        Run::default()
-                            .property(
-                                CharacterProperty::default()
-                                    .bold(*properties.get("font-weight").unwrap_or(&"") == "bold"),
-                            )
-                            .push_text(text),
+                Run::default()
+                    .property(
+                        CharacterProperty::default()
+                            .bold(*properties.get("font-weight").unwrap_or(&"") == "bold"),
                     )
-                    .property(ParagraphProperty::default().spacing(s)),
+                    .push_text(text),
             );
         }
         _ => {
@@ -159,13 +145,24 @@ impl Post {
             let author = format!("{} ({})", message.author, message.date);
 
             let author_p = Paragraph::default().push_text(author);
-            let message_p: Vec<Paragraph> = (*message).clone().into();
+            let message_p: Vec<Run> = (*message).clone().into();
 
             docx.document.push(author_p);
-            message_p.into_iter().for_each(|p| {
-                docx.document.push(p);
-            });
-            docx.document.push(Paragraph::default());
+            let mut pa = Paragraph::default();
+
+            for run in message_p {
+                pa = pa.push(run)
+            }
+
+            docx.document.push(pa);
+            docx.document.push(
+                Paragraph::default().push(
+                    Run::default()
+                        .push_text("")
+                        .push_break(BreakType::TextWrapping)
+                        .push_break(BreakType::TextWrapping),
+                ),
+            );
         }
 
         docx.write_file(format!(
