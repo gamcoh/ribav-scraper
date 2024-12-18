@@ -1,9 +1,14 @@
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
+use docx_rust::document::{Document, Paragraph, Run, TextSpace};
+use docx_rust::formatting::{CharacterProperty, ParagraphProperty, Size, Spacing};
+use docx_rust::Docx;
+use ego_tree::NodeRef;
 use encoding_rs::WINDOWS_1252;
 use futures::future::join_all;
 use reqwest::{header, Client};
-use scraper::{Html, Selector};
+use scraper::{selectable::Selectable, Html, Selector};
+use scraper::{ElementRef, Node};
 use std::collections::HashMap;
 use tokio::{self};
 
@@ -13,13 +18,203 @@ const MAX_PAGES: u16 = 1;
 const PAGE_SIZE: u16 = 50;
 const BASE_URL: &str = "https://www.techouvot.com/";
 
-#[derive(Debug, Default)]
+// extract!(post, &author_sel, text) -> post.select(&author_sel).next().unwrap().text().collect::<String>().trim().to_string()
+macro_rules! extract {
+    ($post:ident, $sel:expr) => {
+        $post
+            .select($sel)
+            .next()
+            .unwrap()
+            .text()
+            .collect::<String>()
+            .trim()
+            .to_string()
+    };
+    ($post:ident, $sel:expr, $want:ident) => {
+        $post.select($sel).next().unwrap().$want()
+    };
+}
+
+#[derive(Debug, Default, Clone)]
 struct Post {
     title: String,
     forum: String,
     responses: u32,
     views: u32,
     html: Option<Html>,
+    messages: Option<Vec<PostMessage>>,
+}
+
+#[derive(Debug, Clone)]
+struct PostMessage {
+    author: String,
+    date: String,
+    message: String,
+}
+
+impl Into<Vec<Paragraph<'_>>> for PostMessage {
+    fn into(self) -> Vec<Paragraph<'static>> {
+        let html = Html::parse_fragment(&self.message);
+        let container = html
+            .select(&Selector::parse(".postrow-message").unwrap())
+            .next()
+            .unwrap();
+
+        let mut paragraphs = Vec::new();
+        let mut s = Spacing::default();
+        s.after = Some(0);
+
+        let mut children = container.descendants();
+        while let Some(node) = children.next() {
+            match node.value() {
+                Node::Text(text) => {
+                    let text = text.text.trim();
+                    paragraphs.push(
+                        Paragraph::default()
+                            .push(
+                                Run::default()
+                                    .property(CharacterProperty::default())
+                                    .push_text(text.to_owned()),
+                            )
+                            .property(ParagraphProperty::default().spacing(s.clone())),
+                    );
+                }
+                Node::Element(ref _elem) => {
+                    let el = ElementRef::wrap(node);
+                    paragraphs.extend(parse_html_to_docx_format(el, s.clone()));
+
+                    // If the node is an element, we need to consume the next node.
+                    // children.next();
+                }
+                _ => {
+                    println!("Unknown node: {:?}", node);
+                }
+            }
+        }
+
+        paragraphs
+    }
+}
+
+fn parse_html_to_docx_format<'a>(el: Option<ElementRef>, s: Spacing) -> Vec<Paragraph<'a>> {
+    let mut paragraphs = Vec::new();
+
+    if el.is_none() {
+        return paragraphs;
+    }
+
+    match el.unwrap().value().name() {
+        "div" => {
+            println!("Div found");
+        }
+        // "br" => {
+        //     Paragraph::default()
+        //         .push(Run::default().push_text(("\n", TextSpace::Preserve)));
+        // }
+        "span" => {
+            let properties = el
+                .unwrap()
+                .attr("style")
+                .unwrap_or_default()
+                .split(';')
+                .map(|prop| {
+                    let mut split = prop.split(':');
+                    let key = split.next().unwrap();
+                    let value = split.next().unwrap();
+                    (key, value)
+                })
+                .collect::<HashMap<_, _>>();
+
+            let text = el.unwrap().text().collect::<String>();
+
+            paragraphs.push(
+                Paragraph::default()
+                    .push(
+                        Run::default()
+                            .property(
+                                CharacterProperty::default()
+                                    .bold(*properties.get("font-weight").unwrap_or(&"") == "bold"),
+                            )
+                            .push_text(text),
+                    )
+                    .property(ParagraphProperty::default().spacing(s)),
+            );
+        }
+        _ => {
+            println!("Unknown tag: {}", el.unwrap().value().name());
+        }
+    }
+
+    paragraphs
+}
+
+impl Post {
+    fn save(&mut self) -> Result<()> {
+        self._get_messages()?;
+        self._messages_to_word()?;
+
+        Ok(())
+    }
+
+    fn _messages_to_word(&self) -> Result<()> {
+        let mut docx = Docx::default();
+
+        for message in self.messages.as_ref().unwrap() {
+            let author = format!("{} ({})", message.author, message.date);
+
+            let author_p = Paragraph::default().push_text(author);
+            let message_p: Vec<Paragraph> = (*message).clone().into();
+
+            docx.document.push(author_p);
+            message_p.into_iter().for_each(|p| {
+                docx.document.push(p);
+            });
+            docx.document.push(Paragraph::default());
+        }
+
+        docx.write_file(format!(
+            "files_generated/{}.docx",
+            self.title.escape_default()
+        ))
+        .unwrap();
+
+        Ok(())
+    }
+
+    fn _get_messages(&mut self) -> Result<()> {
+        let html = self
+            .html
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("HTML not fetched for post"))?;
+
+        let posts_sel =
+            Selector::parse(".container > .overflow-hidden.border-blue-500 > div > .flex")
+                .map_err(|e| anyhow::anyhow!("Failed to parse posts selector: {}", e))?;
+        let author_sel = Selector::parse("div strong.block.mb-2")
+            .map_err(|e| anyhow::anyhow!("Failed to parse author selector: {}", e))?;
+        let date_sel = Selector::parse("a.text-blue-link")
+            .map_err(|e| anyhow::anyhow!("Failed to parse date selector: {}", e))?;
+        let message_sel = Selector::parse(".py-4.postrow-message")
+            .map_err(|e| anyhow::anyhow!("Failed to parse message selector: {}", e))?;
+
+        html.select(&posts_sel).for_each(|post| {
+            let author = extract!(post, &author_sel);
+            let date = extract!(post, &date_sel);
+            let message = extract!(post, &message_sel, html);
+
+            // We need to update the messages field of the post
+            let post_message = PostMessage {
+                author,
+                date,
+                message,
+            };
+            self.messages
+                .get_or_insert_with(Vec::new)
+                .push(post_message);
+        });
+
+        Ok(())
+    }
 }
 
 fn number_days_since_2020() -> i64 {
@@ -50,10 +245,11 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to get initial HTML page")?;
 
-    let next_page_url = find_next_page(&doc).ok_or_else(|| {
-        warn!("No next page found");
-        anyhow::anyhow!("No next page found")
-    })?;
+    let next_page_url = find_next_page(&doc)
+        .ok_or_else(|| {
+            warn!("No next page found");
+        })
+        .unwrap_or(&"");
 
     let urls = (0..MAX_PAGES)
         .map(|page| {
@@ -62,6 +258,9 @@ async fn main() -> Result<()> {
             next_url
         })
         .collect::<Vec<_>>();
+
+    // TODO: Remove this
+    let urls = vec![urls.first().unwrap().clone()];
 
     let docs = join_all(
         urls.iter()
@@ -78,19 +277,29 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Now let's fetch the HTML for each post and store it in the Post struct
-    let post_urls = posts.keys().cloned().collect::<Vec<_>>();
-    let post_fetches = post_urls
-        .iter()
-        .map(|url| get_html(&client, url))
-        .collect::<Vec<_>>();
+    // TODO: Remove this
+    // // Now let's fetch the HTML for each post and store it in the Post struct
+    // let post_urls = posts.keys().cloned().collect::<Vec<_>>();
+    // let post_fetches = post_urls
+    //     .iter()
+    //     .map(|url| get_html(&client, url))
+    //     .collect::<Vec<_>>();
 
-    for post_doc in join_all(post_fetches).await {
-        let (doc, url) = post_doc?;
-        info!("Fetched HTML for post: {}", url);
-        let post = posts.get_mut((*url).as_str()).unwrap();
-        post.html = Some(doc);
-    }
+    // for post_doc in join_all(post_fetches).await {
+    let post_doc = get_html(
+        &client,
+        "https://www.techouvot.com/cours_par_zoom-vt8030928.html?highlight=",
+    )
+    .await?;
+    let (doc, url) = post_doc;
+    info!("Fetched HTML for post: {}", url);
+    let post = posts
+        .get_mut("https://www.techouvot.com/cours_par_zoom-vt8030928.html?highlight=")
+        .unwrap();
+    post.html = Some(doc);
+
+    post.save()?;
+    // }
 
     info!("Total posts found: {}", posts.len());
     Ok(())
@@ -226,6 +435,5 @@ fn find_next_page(html: &Html) -> Option<&str> {
     let href = next_page_link.value().attr("href")?;
     let base_link = href.split('&').next()?;
 
-    // Add &start parameter to navigate pages
     Some(base_link)
 }
