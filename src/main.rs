@@ -125,9 +125,9 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                             .bold(*properties.get("font-weight").unwrap_or(&"") == "bold")
                             .italics(*properties.get("font-style").unwrap_or(&"") == "italic"),
                     )
-                    .push_text(" ")
+                    .push_text((" ", TextSpace::Preserve))
                     .push_text(text)
-                    .push_text(" "),
+                    .push_text((" ", TextSpace::Preserve)),
             );
         }
         _ => {
