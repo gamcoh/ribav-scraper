@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
 use chrono::{TimeZone, Utc};
-use docx_rust::document::{Document, Paragraph, Run, TextSpace};
-use docx_rust::formatting::{CharacterProperty, ParagraphProperty, Size, Spacing};
+use docx_rust::document::{Paragraph, Run};
+use docx_rust::formatting::{CharacterProperty, ParagraphProperty, Spacing};
 use docx_rust::Docx;
-use ego_tree::NodeRef;
 use encoding_rs::WINDOWS_1252;
 use futures::future::join_all;
 use reqwest::{header, Client};
@@ -38,9 +37,6 @@ macro_rules! extract {
 #[derive(Debug, Default, Clone)]
 struct Post {
     title: String,
-    forum: String,
-    responses: u32,
-    views: u32,
     html: Option<Html>,
     messages: Option<Vec<PostMessage>>,
 }
@@ -371,18 +367,7 @@ async fn get_posts_from_current_page(html: &Html) -> Result<HashMap<String, Post
             continue;
         }
 
-        let forum_cell = &cells[1];
         let title_cell = &cells[2];
-        let responses_cell = &cells[4];
-        let views_cell = &cells[5];
-
-        let forum_link = match forum_cell.select(&link_selector).next() {
-            Some(link) => link,
-            None => {
-                warn!("No forum link found in cell");
-                continue;
-            }
-        };
         let title_link = match title_cell.select(&link_selector).next() {
             Some(link) => link,
             None => {
@@ -390,16 +375,6 @@ async fn get_posts_from_current_page(html: &Html) -> Result<HashMap<String, Post
                 continue;
             }
         };
-
-        let responses_text = responses_cell.text().collect::<String>();
-        let views_text = views_cell.text().collect::<String>();
-
-        let responses = responses_text
-            .parse::<u32>()
-            .with_context(|| format!("Failed to parse responses: {}", responses_text))?;
-        let views = views_text
-            .parse::<u32>()
-            .with_context(|| format!("Failed to parse views: {}", views_text))?;
 
         let href = match title_link.value().attr("href") {
             Some(h) => h.to_string(),
@@ -410,15 +385,11 @@ async fn get_posts_from_current_page(html: &Html) -> Result<HashMap<String, Post
         };
 
         let title = title_link.text().collect::<String>();
-        let forum = forum_link.text().collect::<String>();
 
         posts.insert(
             format!("{}{}", BASE_URL, href),
             Post {
                 title,
-                forum,
-                responses,
-                views,
                 ..Default::default()
             },
         );
