@@ -7,7 +7,7 @@ use encoding_rs::WINDOWS_1252;
 use futures::future::join_all;
 use reqwest::{header, Client};
 use scraper::{selectable::Selectable, Html, Selector};
-use scraper::{ElementRef, Node};
+use scraper::{CaseSensitivity, ElementRef, Node};
 use std::collections::HashMap;
 use tokio::{self};
 
@@ -73,6 +73,17 @@ impl Into<Vec<Run<'_>>> for PostMessage {
                     if el.unwrap().value().name().ne("br") && index > 1 {
                         children.next();
                     }
+
+                    if el
+                        .unwrap()
+                        .value()
+                        .has_class("border-blue-500", CaseSensitivity::CaseSensitive)
+                        && index > 1
+                    {
+                        let needs_to_skip = el.unwrap().children().collect::<Vec<_>>().len();
+                        children.nth(needs_to_skip);
+                        continue;
+                    }
                 }
                 _ => {
                     info!("Unknown node: {:?}", node);
@@ -91,9 +102,37 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
         return paragraphs;
     }
 
-    match el.unwrap().value().name() {
+    let el = el.unwrap();
+
+    match el.value().name() {
         "div" => {
-            info!("Div found");
+            if el
+                .value()
+                .has_class("postrow-message", CaseSensitivity::CaseSensitive)
+            {
+                return paragraphs;
+            }
+
+            if el
+                .value()
+                .has_class("border-blue-500", CaseSensitivity::CaseSensitive)
+            {
+                paragraphs.push(
+                    Run::default()
+                        .property(CharacterProperty::default().bold(true))
+                        .push_text("Citation: ")
+                        .push_break(BreakType::TextWrapping),
+                );
+                // Skip the "Citation: " part
+                let t = el.text().skip(10).collect::<String>();
+                paragraphs.push(Run::default().push_text(t.trim_start().to_owned()));
+            } else {
+                unimplemented!(
+                    "Unknown div class: {:?} with text {:?}",
+                    el.value(),
+                    el.text().collect::<String>()
+                );
+            }
         }
         "br" => {
             paragraphs.push(
@@ -104,7 +143,6 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
         }
         "span" => {
             let properties = el
-                .unwrap()
                 .attr("style")
                 .unwrap_or_default()
                 .split(';')
@@ -116,7 +154,7 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                 })
                 .collect::<HashMap<_, _>>();
 
-            let text = el.unwrap().text().collect::<String>();
+            let text = el.text().collect::<String>();
 
             paragraphs.push(
                 Run::default()
@@ -131,7 +169,7 @@ fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
             );
         }
         _ => {
-            info!("Unknown tag: {}", el.unwrap().value().name());
+            info!("Unknown tag: {}", el.value().name());
         }
     }
 
