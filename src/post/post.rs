@@ -1,7 +1,11 @@
 use crate::extract;
 use crate::parser::parser::parse_html_to_docx_format;
+use crate::utils::functions::anonymize_author;
 use anyhow::Result;
 use docx_rust::document::{BreakType, Paragraph, Run};
+use docx_rust::formatting::{
+    CharacterProperty, JustificationVal, ParagraphProperty, UnderlineStyle,
+};
 use docx_rust::Docx;
 use scraper::{CaseSensitivity, ElementRef, Node};
 use scraper::{Html, Selector};
@@ -79,11 +83,47 @@ impl Post {
 
     fn _messages_to_word(&self) -> Result<()> {
         let mut docx = Docx::default();
+        docx.document.push(
+            Paragraph::default()
+                .push(
+                    Run::default()
+                        .push_text(self.title.to_owned())
+                        .property(CharacterProperty::default().bold(true).size(32 as u8))
+                        .push_break(BreakType::TextWrapping)
+                        .push_break(BreakType::TextWrapping),
+                )
+                .property(ParagraphProperty::default().justification(JustificationVal::Center)),
+        );
 
         for message in self.messages.as_ref().unwrap() {
-            let author = format!("{} ({})", message.author, message.date);
-
-            let author_p = Paragraph::default().push_text(author);
+            let author_p = if message.author.contains("Binyamin Wattenberg") {
+                Paragraph::default().push(
+                    Run::default()
+                        .push_text("Réponse:")
+                        .property(
+                            CharacterProperty::default()
+                                .bold(true)
+                                .size(24 as u8)
+                                .underline(UnderlineStyle::Single),
+                        )
+                        .push_break(BreakType::TextWrapping),
+                )
+            } else {
+                Paragraph::default().push(
+                    Run::default()
+                        .push_text(format!(
+                            "Question par {}:",
+                            anonymize_author(message.author.to_owned())
+                        ))
+                        .property(
+                            CharacterProperty::default()
+                                .bold(true)
+                                .size(24 as u8)
+                                .underline(UnderlineStyle::Single),
+                        )
+                        .push_break(BreakType::TextWrapping),
+                )
+            };
             let message_p: Vec<Run> = (*message).clone().into();
 
             docx.document.push(author_p);
