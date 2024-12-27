@@ -71,7 +71,15 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                     .property(
                         CharacterProperty::default()
                             .bold(*properties.get("font-weight").unwrap_or(&"") == "bold")
-                            .italics(*properties.get("font-style").unwrap_or(&"") == "italic"),
+                            .italics(*properties.get("font-style").unwrap_or(&"") == "italic")
+                            .size(
+                                properties
+                                    .get("font-size")
+                                    .unwrap_or(&"18px")
+                                    .trim_end_matches("px")
+                                    .parse::<u8>()
+                                    .unwrap(),
+                            ),
                     )
                     .push_text((" ", TextSpace::Preserve))
                     .push_text(text)
