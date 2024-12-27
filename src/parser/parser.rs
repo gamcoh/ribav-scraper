@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use docx_rust::document::{BreakType, Run, TextSpace};
-use docx_rust::formatting::CharacterProperty;
+use docx_rust::formatting::{CharacterProperty, UnderlineStyle};
 use scraper::{CaseSensitivity, ElementRef};
-use tracing::info;
 
 pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
     let mut paragraphs = Vec::new();
@@ -15,6 +14,13 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
     let el = el.unwrap();
 
     match el.value().name() {
+        "a" => {
+            paragraphs.push(
+                Run::default()
+                    .property(CharacterProperty::default().underline(UnderlineStyle::Single))
+                    .push_text(el.text().collect::<String>()),
+            );
+        }
         "div" => {
             if el
                 .value()
@@ -34,8 +40,15 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                         .push_break(BreakType::TextWrapping),
                 );
                 // Skip the "Citation: " part
-                let t = el.text().skip(10).collect::<String>();
-                paragraphs.push(Run::default().push_text(t.trim_start().to_owned()));
+                let t = el.text().collect::<String>();
+                paragraphs.push(
+                    Run::default().push_text(
+                        t.trim_start()
+                            .trim_start_matches("Citation:")
+                            .trim_start()
+                            .to_owned(),
+                    ),
+                );
             } else {
                 unimplemented!(
                     "Unknown div class: {:?} with text {:?}",
@@ -87,7 +100,7 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
             );
         }
         _ => {
-            info!("Unknown tag: {}", el.value().name());
+            panic!("Unknown tag: {}", el.value().name());
         }
     }
 
