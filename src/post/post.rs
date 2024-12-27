@@ -17,6 +17,7 @@ pub struct Post {
     pub title: String,
     pub html: Option<Html>,
     pub messages: Option<Vec<PostMessage>>,
+    pub last_author: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +82,7 @@ impl Post {
         Ok(())
     }
 
-    fn _messages_to_word(&self) -> Result<()> {
+    fn _messages_to_word(&mut self) -> Result<()> {
         let mut docx = Docx::default();
         docx.document.push(
             Paragraph::default()
@@ -97,20 +98,32 @@ impl Post {
 
         for message in self.messages.as_ref().unwrap() {
             let author_p = if message.author.contains("Binyamin Wattenberg") {
-                Paragraph::default().push(
-                    Run::default()
-                        .push_text("Réponse:")
-                        .property(
-                            CharacterProperty::default()
-                                .bold(true)
-                                .size(24 as u8)
-                                .underline(UnderlineStyle::Single),
-                        )
-                        .push_break(BreakType::TextWrapping),
-                )
+                if self.last_author.is_some()
+                    && self
+                        .last_author
+                        .as_ref()
+                        .unwrap()
+                        .contains("Binyamin Wattenberg")
+                {
+                    Paragraph::default().push(Run::default().push_text(""))
+                } else {
+                    Paragraph::default().push(
+                        Run::default()
+                            .push_break(BreakType::TextWrapping)
+                            .push_text("Réponse:")
+                            .property(
+                                CharacterProperty::default()
+                                    .bold(true)
+                                    .size(24 as u8)
+                                    .underline(UnderlineStyle::Single),
+                            )
+                            .push_break(BreakType::TextWrapping),
+                    )
+                }
             } else {
                 Paragraph::default().push(
                     Run::default()
+                        .push_break(BreakType::TextWrapping)
                         .push_text(format!(
                             "Question par {}:",
                             anonymize_author(message.author.to_owned())
@@ -124,6 +137,9 @@ impl Post {
                         .push_break(BreakType::TextWrapping),
                 )
             };
+
+            self.last_author = Some(message.author.clone());
+
             let message_p: Vec<Run> = (*message).clone().into();
 
             docx.document.push(author_p);
@@ -134,14 +150,8 @@ impl Post {
             }
 
             docx.document.push(pa);
-            docx.document.push(
-                Paragraph::default().push(
-                    Run::default()
-                        .push_text("")
-                        .push_break(BreakType::TextWrapping)
-                        .push_break(BreakType::TextWrapping),
-                ),
-            );
+            docx.document
+                .push(Paragraph::default().push(Run::default().push_text("")));
         }
 
         docx.write_file(format!(
