@@ -156,7 +156,10 @@ impl Post {
 
         docx.write_file(format!(
             "files_generated/{}.docx",
-            self.title.escape_default()
+            self.title
+                .escape_default()
+                .collect::<String>()
+                .replace("/", "_")
         ))
         .unwrap();
 

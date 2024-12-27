@@ -79,13 +79,13 @@ async fn main() -> Result<()> {
     // for post_doc in join_all(post_fetches).await {
     let post_doc = get_html(
         &client,
-        "https://www.techouvot.com/bar_mistva_et_bat_mistva-vt8031008.html?highlight=",
+        "https://www.techouvot.com/relations_filles_garcons-vt8030971.html?highlight=",
     )
     .await?;
     let (doc, url) = post_doc;
     info!("Fetched HTML for post: {}", url);
     let post = posts
-        .get_mut("https://www.techouvot.com/bar_mistva_et_bat_mistva-vt8031008.html?highlight=")
+        .get_mut("https://www.techouvot.com/relations_filles_garcons-vt8030971.html?highlight=")
         .unwrap();
     post.html = Some(doc);
 
