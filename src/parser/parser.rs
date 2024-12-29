@@ -111,27 +111,23 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                 })
                 .collect::<HashMap<_, _>>();
 
-            let text = el.text().collect::<String>();
+            let r = CharacterProperty::default()
+                .bold(*properties.get("font-weight").unwrap_or(&"") == "bold")
+                .italics(*properties.get("font-style").unwrap_or(&"") == "italic")
+                .size(
+                    properties
+                        .get("font-size")
+                        .unwrap_or(&"18px")
+                        .trim_end_matches("px")
+                        .parse::<u8>()
+                        .unwrap(),
+                );
 
-            paragraphs.push(
-                Run::default()
-                    .property(
-                        CharacterProperty::default()
-                            .bold(*properties.get("font-weight").unwrap_or(&"") == "bold")
-                            .italics(*properties.get("font-style").unwrap_or(&"") == "italic")
-                            .size(
-                                properties
-                                    .get("font-size")
-                                    .unwrap_or(&"18px")
-                                    .trim_end_matches("px")
-                                    .parse::<u8>()
-                                    .unwrap(),
-                            ),
-                    )
-                    .push_text((" ", TextSpace::Preserve))
-                    .push_text(text)
-                    .push_text((" ", TextSpace::Preserve)),
-            );
+            paragraphs.push(Run::default().push_text((" ", TextSpace::Preserve)));
+            for child in parse_recursive(el) {
+                paragraphs.push(child.property(r.clone()));
+            }
+            paragraphs.push(Run::default().push_text((" ", TextSpace::Preserve)));
         }
         _ => {
             panic!("Unknown tag: {}", el.value().name());
