@@ -83,6 +83,13 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
 
                 // last div on the citation block
                 paragraphs.extend(parse_recursive(el.child_elements().last().unwrap()));
+
+                paragraphs.push(
+                    Run::default()
+                        .push_text("")
+                        .push_break(BreakType::TextWrapping)
+                        .push_break(BreakType::TextWrapping),
+                );
             } else {
                 unimplemented!(
                     "Unknown div class: {:?} with text {:?}",
