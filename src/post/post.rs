@@ -36,7 +36,7 @@ impl Into<Vec<Run<'_>>> for PostMessage {
             .unwrap();
 
         let mut paragraphs = Vec::new();
-        let mut children = container.descendants();
+        let mut children = container.children();
 
         let mut index = 0;
         while let Some(node) = children.next() {

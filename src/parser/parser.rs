@@ -39,15 +39,18 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                         .push_text("Citation: ")
                         .push_break(BreakType::TextWrapping),
                 );
-                // Skip the "Citation: " part
                 let t = el.text().collect::<String>();
                 paragraphs.push(
-                    Run::default().push_text(
-                        t.trim_start()
-                            .trim_start_matches("Citation:")
-                            .trim_start()
-                            .to_owned(),
-                    ),
+                    Run::default()
+                        .push_text((
+                            t.trim_start()
+                                .trim_start_matches("Citation:") // Remove the citation prefix
+                                .trim_start()
+                                .to_owned(),
+                            TextSpace::Preserve,
+                        ))
+                        .push_break(BreakType::TextWrapping)
+                        .push_break(BreakType::TextWrapping),
                 );
             } else {
                 unimplemented!(
