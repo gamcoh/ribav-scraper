@@ -105,6 +105,21 @@ impl Post {
             let message_p: Vec<Run> = (*message).clone().into();
 
             docx.document.push(author_p);
+
+            // Adding the date
+            docx.document.push(
+                Paragraph::default().push(
+                    Run::default()
+                        .push_text(format!("Le {}", message.date.replace("Posté le: ", "")))
+                        .property(
+                            CharacterProperty::default()
+                                .bold(true)
+                                .underline(UnderlineStyle::Single),
+                        )
+                        .push_break(BreakType::TextWrapping),
+                ),
+            );
+
             let mut pa = Paragraph::default();
 
             for run in message_p {
