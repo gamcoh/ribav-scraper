@@ -10,9 +10,7 @@ pub fn parse_recursive<'a>(container: ElementRef) -> Vec<Run<'a>> {
     let mut paragraphs = Vec::new();
     let mut children = container.children();
 
-    let mut index = 0;
     while let Some(node) = children.next() {
-        index += 1;
         match node.value() {
             Node::Text(text) => {
                 let text = text.text.trim();
@@ -21,20 +19,6 @@ pub fn parse_recursive<'a>(container: ElementRef) -> Vec<Run<'a>> {
             Node::Element(ref _elem) => {
                 let el = ElementRef::wrap(node);
                 paragraphs.extend(parse_html_to_docx_format(el));
-                if el.unwrap().value().name().ne("br") && index > 1 {
-                    children.next();
-                }
-
-                if el
-                    .unwrap()
-                    .value()
-                    .has_class("border-blue-500", CaseSensitivity::CaseSensitive)
-                    && index > 1
-                {
-                    let needs_to_skip = el.unwrap().children().collect::<Vec<_>>().len();
-                    children.nth(needs_to_skip);
-                    continue;
-                }
             }
             _ => {
                 info!("Unknown node: {:?}", node);
