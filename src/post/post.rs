@@ -1,5 +1,5 @@
 use crate::extract;
-use crate::parser::parser::parse_html_to_docx_format;
+use crate::parser::parser::parse_recursive;
 use crate::utils::functions::anonymize_author;
 use anyhow::Result;
 use docx_rust::document::{BreakType, Paragraph, Run};
@@ -7,10 +7,7 @@ use docx_rust::formatting::{
     CharacterProperty, JustificationVal, ParagraphProperty, UnderlineStyle,
 };
 use docx_rust::Docx;
-use scraper::{CaseSensitivity, ElementRef, Node};
 use scraper::{Html, Selector};
-
-use tracing::info;
 
 #[derive(Debug, Default, Clone)]
 pub struct Post {
@@ -35,42 +32,7 @@ impl Into<Vec<Run<'_>>> for PostMessage {
             .next()
             .unwrap();
 
-        let mut paragraphs = Vec::new();
-        let mut children = container.children();
-
-        let mut index = 0;
-        while let Some(node) = children.next() {
-            index += 1;
-            match node.value() {
-                Node::Text(text) => {
-                    let text = text.text.trim();
-                    paragraphs.push(Run::default().push_text(text.to_owned()));
-                }
-                Node::Element(ref _elem) => {
-                    let el = ElementRef::wrap(node);
-                    paragraphs.extend(parse_html_to_docx_format(el));
-                    if el.unwrap().value().name().ne("br") && index > 1 {
-                        children.next();
-                    }
-
-                    if el
-                        .unwrap()
-                        .value()
-                        .has_class("border-blue-500", CaseSensitivity::CaseSensitive)
-                        && index > 1
-                    {
-                        let needs_to_skip = el.unwrap().children().collect::<Vec<_>>().len();
-                        children.nth(needs_to_skip);
-                        continue;
-                    }
-                }
-                _ => {
-                    info!("Unknown node: {:?}", node);
-                }
-            }
-        }
-
-        paragraphs
+        parse_recursive(container)
     }
 }
 

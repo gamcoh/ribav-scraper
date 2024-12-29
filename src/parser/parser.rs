@@ -1,8 +1,49 @@
 use std::collections::HashMap;
+use tracing::info;
 
 use docx_rust::document::{BreakType, Run, TextSpace};
 use docx_rust::formatting::{CharacterProperty, UnderlineStyle};
+use scraper::Node;
 use scraper::{CaseSensitivity, ElementRef};
+
+pub fn parse_recursive<'a>(container: ElementRef) -> Vec<Run<'a>> {
+    let mut paragraphs = Vec::new();
+    let mut children = container.children();
+
+    let mut index = 0;
+    while let Some(node) = children.next() {
+        index += 1;
+        match node.value() {
+            Node::Text(text) => {
+                let text = text.text.trim();
+                paragraphs.push(Run::default().push_text(text.to_owned()));
+            }
+            Node::Element(ref _elem) => {
+                let el = ElementRef::wrap(node);
+                paragraphs.extend(parse_html_to_docx_format(el));
+                if el.unwrap().value().name().ne("br") && index > 1 {
+                    children.next();
+                }
+
+                if el
+                    .unwrap()
+                    .value()
+                    .has_class("border-blue-500", CaseSensitivity::CaseSensitive)
+                    && index > 1
+                {
+                    let needs_to_skip = el.unwrap().children().collect::<Vec<_>>().len();
+                    children.nth(needs_to_skip);
+                    continue;
+                }
+            }
+            _ => {
+                info!("Unknown node: {:?}", node);
+            }
+        }
+    }
+
+    paragraphs
+}
 
 pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
     let mut paragraphs = Vec::new();
@@ -39,19 +80,9 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                         .push_text("Citation: ")
                         .push_break(BreakType::TextWrapping),
                 );
-                let t = el.text().collect::<String>();
-                paragraphs.push(
-                    Run::default()
-                        .push_text((
-                            t.trim_start()
-                                .trim_start_matches("Citation:") // Remove the citation prefix
-                                .trim_start()
-                                .to_owned(),
-                            TextSpace::Preserve,
-                        ))
-                        .push_break(BreakType::TextWrapping)
-                        .push_break(BreakType::TextWrapping),
-                );
+
+                // last div on the citation block
+                paragraphs.extend(parse_recursive(el.child_elements().last().unwrap()));
             } else {
                 unimplemented!(
                     "Unknown div class: {:?} with text {:?}",
