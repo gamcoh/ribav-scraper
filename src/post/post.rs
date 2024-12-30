@@ -1,10 +1,10 @@
 use crate::extract;
 use crate::parser::parser::parse_recursive;
-use crate::utils::functions::anonymize_author;
+use crate::utils::functions::{anonymize_author, is_citation};
 use anyhow::Result;
 use docx_rust::document::{BreakType, Paragraph, Run};
 use docx_rust::formatting::{
-    CharacterProperty, JustificationVal, ParagraphProperty, UnderlineStyle,
+    CharacterProperty, Indent, JustificationVal, ParagraphProperty, UnderlineStyle,
 };
 use docx_rust::Docx;
 use scraper::{Html, Selector};
@@ -102,7 +102,7 @@ impl Post {
 
             self.last_author = Some(message.author.clone());
 
-            let message_p: Vec<Run> = (*message).clone().into();
+            let message_p: Vec<Run> = message.to_owned().into();
 
             docx.document.push(author_p);
 
@@ -120,13 +120,54 @@ impl Post {
                 ),
             );
 
-            let mut pa = Paragraph::default();
+            let mut messages_iter = message_p.into_iter();
+            while let Some(run) = messages_iter.next() {
+                // Is this run a citation?
+                if is_citation(&run) {
+                    let mut p = Paragraph::default().property(ParagraphProperty::default().indent(
+                        Indent {
+                            left: Some(300),
+                            ..Default::default()
+                        },
+                    ));
+                    p = p.push(run);
+                    let mut last_run = None;
+                    while let Some(next_run) = messages_iter.next() {
+                        if !is_citation(&next_run) {
+                            last_run = Some(next_run);
+                            break;
+                        }
+                        p = p.push(next_run);
+                    }
+                    docx.document.push(p);
+                    if let Some(last_run) = last_run {
+                        docx.document.push(Paragraph::default().push(last_run));
+                    }
+                } else {
+                    let mut p = Paragraph::default();
+                    p = p.push(run);
+                    let mut last_run = None;
+                    while let Some(next_run) = messages_iter.next() {
+                        if is_citation(&next_run) {
+                            last_run = Some(next_run);
+                            break;
+                        }
+                        p = p.push(next_run);
+                    }
+                    docx.document.push(p);
 
-            for run in message_p {
-                pa = pa.push(run)
+                    if let Some(last_run) = last_run {
+                        docx.document
+                            .push(Paragraph::default().push(last_run).property(
+                                ParagraphProperty::default().indent(Indent {
+                                    left: Some(300),
+                                    ..Default::default()
+                                }),
+                            ));
+                    }
+                }
             }
 
-            docx.document.push(pa);
             docx.document
                 .push(Paragraph::default().push(Run::default().push_text("")));
         }

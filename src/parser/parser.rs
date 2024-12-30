@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use tracing::info;
 
 use docx_rust::document::{BreakType, Run, TextSpace};
-use docx_rust::formatting::{CharacterProperty, UnderlineStyle};
+use docx_rust::formatting::{CharacterProperty, CharacterStyleId, UnderlineStyle};
 use scraper::Node;
 use scraper::{CaseSensitivity, ElementRef};
 
@@ -60,13 +60,22 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
             {
                 paragraphs.push(
                     Run::default()
-                        .property(CharacterProperty::default().bold(true))
-                        .push_text("Citation: ")
-                        .push_break(BreakType::TextWrapping),
+                        .property(
+                            CharacterProperty::default()
+                                .bold(true)
+                                .style_id(CharacterStyleId::from("citation")),
+                        )
+                        .push_text("Citation: "),
                 );
 
                 // last div on the citation block
-                paragraphs.extend(parse_recursive(el.child_elements().last().unwrap()));
+                let children = parse_recursive(el.child_elements().last().unwrap());
+                let children = children.into_iter().map(|c| {
+                    c.property(
+                        CharacterProperty::default().style_id(CharacterStyleId::from("citation")),
+                    )
+                });
+                paragraphs.extend(children);
             } else {
                 unimplemented!(
                     "Unknown div class: {:?} with text {:?}",
@@ -95,7 +104,7 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                 })
                 .collect::<HashMap<_, _>>();
 
-            let r = CharacterProperty::default()
+            let cp = CharacterProperty::default()
                 .bold(*properties.get("font-weight").unwrap_or(&"") == "bold")
                 .italics(*properties.get("font-style").unwrap_or(&"") == "italic")
                 .size(
@@ -109,7 +118,7 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
 
             paragraphs.push(Run::default().push_text((" ", TextSpace::Preserve)));
             for child in parse_recursive(el) {
-                paragraphs.push(child.property(r.clone()));
+                paragraphs.push(child.property(cp.clone()));
             }
             paragraphs.push(Run::default().push_text((" ", TextSpace::Preserve)));
         }
