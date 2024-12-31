@@ -1,10 +1,28 @@
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{info, warn};
 
 use docx_rust::document::{BreakType, Run, TextSpace};
-use docx_rust::formatting::{CharacterProperty, CharacterStyleId, Size, UnderlineStyle};
+use docx_rust::formatting::{CharacterProperty, CharacterStyleId, Color, Size, UnderlineStyle};
 use scraper::Node;
 use scraper::{CaseSensitivity, ElementRef};
+
+pub trait CharacterPropertyExt {
+    fn merge(&self, other: &Self) -> Self;
+}
+
+impl CharacterPropertyExt for CharacterProperty<'_> {
+    fn merge(&self, other: &Self) -> Self {
+        Self {
+            bold: self.bold.to_owned().or(other.bold.to_owned()),
+            italics: self.italics.to_owned().or(other.italics.to_owned()),
+            underline: self.underline.to_owned().or(other.underline.to_owned()),
+            size: self.size.to_owned().or(other.size.to_owned()),
+            color: self.color.to_owned().or(other.color.to_owned()),
+            style_id: self.style_id.to_owned().or(other.style_id.to_owned()),
+            ..Default::default()
+        }
+    }
+}
 
 pub fn parse_recursive<'a>(container: ElementRef) -> Vec<Run<'a>> {
     let mut paragraphs = Vec::new();
@@ -104,9 +122,15 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                 })
                 .collect::<HashMap<_, _>>();
 
-            let mut cp = CharacterProperty::default()
-                .bold(*properties.get("font-weight").unwrap_or(&"") == "bold")
-                .italics(*properties.get("font-style").unwrap_or(&"") == "italic");
+            let mut cp = CharacterProperty::default();
+
+            if *properties.get("font-weight").unwrap_or(&"") == "bold" {
+                cp = cp.bold(true);
+            }
+
+            if *properties.get("font-style").unwrap_or(&"") == "italics" {
+                cp = cp.italics(true);
+            }
 
             if *properties.get("text-decoration").unwrap_or(&"") == "underline" {
                 cp = cp.underline(UnderlineStyle::Single);
@@ -123,9 +147,26 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                 ));
             }
 
+            if properties.get("color").is_some() {
+                let color = (*properties.get("color").unwrap()).to_string();
+
+                match color.as_ref() {
+                    "blue" => {
+                        cp = cp.color(Color::from((0, 0, 255)));
+                    }
+                    _ => {
+                        warn!("Unknown color: {}", color);
+                    }
+                }
+            }
+
             paragraphs.push(Run::default().push_text((" ", TextSpace::Preserve)));
             for child in parse_recursive(el) {
-                paragraphs.push(child.property(cp.clone()));
+                let mut cp = cp.clone();
+                if let Some(ref child_cp) = child.property {
+                    cp = cp.merge(child_cp);
+                }
+                paragraphs.push(child.property(cp));
             }
             paragraphs.push(Run::default().push_text((" ", TextSpace::Preserve)));
         }
