@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
         .unwrap();
     post.html = Some(doc);
 
-    post.save()?;
+    post.save(&client).await?;
     // }
 
     info!("Total posts found: {}", posts.len());

@@ -1,5 +1,7 @@
 use crate::extract;
+use crate::http::client::get_html;
 use crate::parser::parser::parse_recursive;
+use crate::utils::constants::BASE_URL;
 use crate::utils::functions::{anonymize_author, is_citation};
 use anyhow::Result;
 use docx_rust::document::{BreakType, Paragraph, Run};
@@ -7,6 +9,7 @@ use docx_rust::formatting::{
     CharacterProperty, Indent, JustificationVal, ParagraphProperty, UnderlineStyle,
 };
 use docx_rust::Docx;
+use reqwest::Client;
 use scraper::{Html, Selector};
 
 #[derive(Debug, Default, Clone)]
@@ -37,8 +40,8 @@ impl Into<Vec<Run<'_>>> for PostMessage {
 }
 
 impl Post {
-    pub fn save(&mut self) -> Result<()> {
-        self._get_messages()?;
+    pub async fn save(&mut self, client: &Client) -> Result<()> {
+        self._get_messages(&client).await?;
         self._messages_to_word()?;
 
         Ok(())
@@ -184,37 +187,52 @@ impl Post {
         Ok(())
     }
 
-    fn _get_messages(&mut self) -> Result<()> {
-        let html = self
+    async fn _get_messages(&mut self, client: &Client) -> Result<()> {
+        let mut html = self
             .html
-            .as_ref()
+            .clone()
             .ok_or_else(|| anyhow::anyhow!("HTML not fetched for post"))?;
 
-        let posts_sel =
-            Selector::parse(".container > .overflow-hidden.border-blue-500 > div > .flex")
-                .map_err(|e| anyhow::anyhow!("Failed to parse posts selector: {}", e))?;
-        let author_sel = Selector::parse("div strong.block.mb-2")
-            .map_err(|e| anyhow::anyhow!("Failed to parse author selector: {}", e))?;
-        let date_sel = Selector::parse("a.text-blue-link")
-            .map_err(|e| anyhow::anyhow!("Failed to parse date selector: {}", e))?;
-        let message_sel = Selector::parse(".py-4.postrow-message")
-            .map_err(|e| anyhow::anyhow!("Failed to parse message selector: {}", e))?;
+        loop {
+            let posts_sel =
+                Selector::parse(".container > .overflow-hidden.border-blue-500 > div > .flex")
+                    .map_err(|e| anyhow::anyhow!("Failed to parse posts selector: {}", e))?;
+            let author_sel = Selector::parse("div strong.block.mb-2")
+                .map_err(|e| anyhow::anyhow!("Failed to parse author selector: {}", e))?;
+            let date_sel = Selector::parse("a.text-blue-link")
+                .map_err(|e| anyhow::anyhow!("Failed to parse date selector: {}", e))?;
+            let message_sel = Selector::parse(".py-4.postrow-message")
+                .map_err(|e| anyhow::anyhow!("Failed to parse message selector: {}", e))?;
 
-        html.select(&posts_sel).for_each(|post| {
-            let author = extract!(post, &author_sel);
-            let date = extract!(post, &date_sel);
-            let message = extract!(post, &message_sel, html);
+            html.select(&posts_sel).for_each(|post| {
+                let author = extract!(post, &author_sel);
+                let date = extract!(post, &date_sel);
+                let message = extract!(post, &message_sel, html);
 
-            // We need to update the messages field of the post
-            let post_message = PostMessage {
-                author,
-                date,
-                message,
-            };
-            self.messages
-                .get_or_insert_with(Vec::new)
-                .push(post_message);
-        });
+                // We need to update the messages field of the post
+                let post_message = PostMessage {
+                    author,
+                    date,
+                    message,
+                };
+                self.messages
+                    .get_or_insert_with(Vec::new)
+                    .push(post_message);
+            });
+
+            // If there are other pages, we need to replace the HTML field with the next page
+            let next_page_sel = Selector::parse("nav.pagination > a[href^='suivante']")
+                .map_err(|e| anyhow::anyhow!("Failed to parse next page selector: {}", e))?;
+
+            let next_page = html.select(&next_page_sel).next();
+            if next_page.is_none() {
+                break;
+            }
+
+            let url = next_page.unwrap().value().attr("href").unwrap();
+            let url = format!("{}{}", BASE_URL, url);
+            html = get_html(client, url).await?.0;
+        }
 
         Ok(())
     }
