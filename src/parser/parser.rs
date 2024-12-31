@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use tracing::info;
 
 use docx_rust::document::{BreakType, Run, TextSpace};
-use docx_rust::formatting::{CharacterProperty, CharacterStyleId, UnderlineStyle};
+use docx_rust::formatting::{CharacterProperty, CharacterStyleId, Size, UnderlineStyle};
 use scraper::Node;
 use scraper::{CaseSensitivity, ElementRef};
 
@@ -104,17 +104,24 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                 })
                 .collect::<HashMap<_, _>>();
 
-            let cp = CharacterProperty::default()
+            let mut cp = CharacterProperty::default()
                 .bold(*properties.get("font-weight").unwrap_or(&"") == "bold")
-                .italics(*properties.get("font-style").unwrap_or(&"") == "italic")
-                .size(
+                .italics(*properties.get("font-style").unwrap_or(&"") == "italic");
+
+            if *properties.get("text-decoration").unwrap_or(&"") == "underline" {
+                cp = cp.underline(UnderlineStyle::Single);
+            }
+
+            if properties.get("font-size").is_some() {
+                cp = cp.size(Size::from(
                     properties
                         .get("font-size")
-                        .unwrap_or(&"18px")
+                        .unwrap()
                         .trim_end_matches("px")
                         .parse::<u8>()
                         .unwrap(),
-                );
+                ));
+            }
 
             paragraphs.push(Run::default().push_text((" ", TextSpace::Preserve)));
             for child in parse_recursive(el) {
