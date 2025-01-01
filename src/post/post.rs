@@ -8,7 +8,7 @@ use docx_rust::document::{BreakType, Paragraph, Run};
 use docx_rust::formatting::{
     CharacterProperty, Indent, JustificationVal, ParagraphProperty, UnderlineStyle,
 };
-use docx_rust::Docx;
+use docx_rust::{Docx, DocxFile};
 use reqwest::Client;
 use scraper::{Html, Selector};
 
@@ -18,6 +18,7 @@ pub struct Post {
     pub html: Option<Html>,
     pub messages: Option<Vec<PostMessage>>,
     pub last_author: Option<String>,
+    pub category: String,
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +49,22 @@ impl Post {
     }
 
     fn _messages_to_word(&mut self) -> Result<()> {
-        let mut docx = Docx::default();
+        let docx_file = DocxFile::from_file(format!(
+            "files_generated/{}.docx",
+            self.category
+                .escape_default()
+                .collect::<String>()
+                .replace("/", "_")
+        ));
+
+        let file;
+        let mut docx = if docx_file.is_ok() {
+            file = docx_file.unwrap();
+            file.parse().unwrap()
+        } else {
+            Docx::default()
+        };
+
         docx.document.push(
             Paragraph::default()
                 .push(
@@ -177,7 +193,7 @@ impl Post {
 
         docx.write_file(format!(
             "files_generated/{}.docx",
-            self.title
+            self.category
                 .escape_default()
                 .collect::<String>()
                 .replace("/", "_")

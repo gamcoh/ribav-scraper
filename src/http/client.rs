@@ -50,10 +50,13 @@ pub async fn get_posts_from_current_page(html: &Html) -> Result<HashMap<String, 
 
         let title = title_link.text().collect::<String>();
 
+        let category = cells[1].text().collect::<String>();
+
         posts.insert(
             format!("{}{}", BASE_URL, href),
             Post {
                 title,
+                category,
                 ..Default::default()
             },
         );
