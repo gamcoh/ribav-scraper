@@ -69,10 +69,10 @@ impl Post {
             Paragraph::default()
                 .push(
                     Run::default()
-                        .push_text(self.title.to_owned())
-                        .property(CharacterProperty::default().bold(true).size(32 as u8))
                         .push_break(BreakType::TextWrapping)
-                        .push_break(BreakType::TextWrapping),
+                        .push_break(BreakType::TextWrapping)
+                        .push_text(self.title.to_owned()[0..1].to_uppercase() + &self.title[1..])
+                        .property(CharacterProperty::default().bold(true).size(32 as u8)),
                 )
                 .property(ParagraphProperty::default().justification(JustificationVal::Center)),
         );
@@ -190,6 +190,12 @@ impl Post {
             docx.document
                 .push(Paragraph::default().push(Run::default().push_text("")));
         }
+
+        docx.document.push(
+            Run::default()
+                .push_break(BreakType::Page)
+                .push_break(BreakType::Page),
+        );
 
         docx.write_file(format!(
             "files_generated/{}.docx",
