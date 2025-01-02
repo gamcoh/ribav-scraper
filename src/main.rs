@@ -50,9 +50,6 @@ async fn main() -> Result<()> {
         })
         .collect::<Vec<_>>();
 
-    // TODO: Remove this
-    let urls = vec![urls.first().unwrap().clone()];
-
     let docs = join_all(
         urls.iter()
             .map(|url| get_html(&client, url))
@@ -68,32 +65,20 @@ async fn main() -> Result<()> {
         );
     }
 
-    // TODO: Remove this
-    // // Now let's fetch the HTML for each post and store it in the Post struct
-    // let post_urls = posts.keys().cloned().collect::<Vec<_>>();
-    // let post_fetches = post_urls
-    //     .iter()
-    //     .map(|url| get_html(&client, url))
-    //     .collect::<Vec<_>>();
+    // Now let's fetch the HTML for each post and store it in the Post struct
+    let post_urls = posts.keys().cloned().collect::<Vec<_>>();
+    let post_fetches = post_urls
+        .iter()
+        .map(|url| get_html(&client, url))
+        .collect::<Vec<_>>();
 
-    // for post_doc in join_all(post_fetches).await {
-    let post_doc = get_html(
-        &client,
-        "https://www.techouvot.com/la_racine_de_erev_et_de_aravot-vt8031562.html?highlight=",
-    )
-    .await?;
-    let (doc, url) = post_doc;
-    info!("Fetched HTML for post: {}", url);
-
-    let post = posts
-        .get_mut(
-            "https://www.techouvot.com/la_racine_de_erev_et_de_aravot-vt8031562.html?highlight=",
-        )
-        .unwrap();
-    post.html = Some(doc);
-
-    post.save(&client).await?;
-    // }
+    for post_doc in join_all(post_fetches).await {
+        let (doc, url) = post_doc?;
+        info!("Fetched HTML for post: {}", url);
+        let post = posts.get_mut(url).unwrap();
+        post.html = Some(doc);
+        post.save(&client).await?;
+    }
 
     info!("Total posts found: {}", posts.len());
     Ok(())
