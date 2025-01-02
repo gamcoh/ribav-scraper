@@ -102,13 +102,18 @@ impl Post {
                     )
                 }
             } else {
+                let author_anonymized = anonymize_author(message.author.to_owned());
+
                 Paragraph::default().push(
                     Run::default()
                         .push_break(BreakType::TextWrapping)
-                        .push_text(format!(
-                            "Question par {}:",
-                            anonymize_author(message.author.to_owned())
-                        ))
+                        .push_text(
+                            author_anonymized
+                                .to_lowercase()
+                                .starts_with("rav ")
+                                .then(|| format!("Réponse par {}", author_anonymized))
+                                .unwrap_or(format!("Question par {}", author_anonymized)),
+                        )
                         .property(
                             CharacterProperty::default()
                                 .bold(true)

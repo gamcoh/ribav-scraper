@@ -11,6 +11,10 @@ pub fn number_days_since_2020() -> i64 {
 }
 
 pub fn anonymize_author<S: AsRef<str>>(author: S) -> String {
+    if author.as_ref().to_lowercase().starts_with("rav ") {
+        return author.as_ref().to_string();
+    }
+
     // e.g. "John Doe" -> "JD"
     author
         .as_ref()
