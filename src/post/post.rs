@@ -71,7 +71,15 @@ impl Post {
                     Run::default()
                         .push_break(BreakType::TextWrapping)
                         .push_break(BreakType::TextWrapping)
-                        .push_text(self.title.to_owned()[0..1].to_uppercase() + &self.title[1..])
+                        .push_text(
+                            self.title
+                                .to_owned()
+                                .chars()
+                                .take(1)
+                                .collect::<String>()
+                                .to_uppercase()
+                                + &self.title.to_owned().chars().skip(1).collect::<String>(),
+                        )
                         .property(CharacterProperty::default().bold(true).size(32 as u8)),
                 )
                 .property(ParagraphProperty::default().justification(JustificationVal::Center)),
