@@ -24,7 +24,7 @@ impl CharacterPropertyExt for CharacterProperty<'_> {
     }
 }
 
-pub fn parse_recursive<'a>(container: ElementRef) -> Vec<Run<'a>> {
+pub fn parse_recursive<'a>(container: ElementRef, last_element_is_citation: bool) -> Vec<Run<'a>> {
     let mut paragraphs = Vec::new();
     let mut children = container.children();
 
@@ -36,7 +36,7 @@ pub fn parse_recursive<'a>(container: ElementRef) -> Vec<Run<'a>> {
             }
             Node::Element(ref _elem) => {
                 let el = ElementRef::wrap(node);
-                paragraphs.extend(parse_html_to_docx_format(el));
+                paragraphs.extend(parse_html_to_docx_format(el, last_element_is_citation));
             }
             _ => {
                 info!("Unknown node: {:?}", node);
@@ -47,7 +47,10 @@ pub fn parse_recursive<'a>(container: ElementRef) -> Vec<Run<'a>> {
     paragraphs
 }
 
-pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
+pub fn parse_html_to_docx_format<'a>(
+    el: Option<ElementRef>,
+    last_element_is_citation: bool,
+) -> Vec<Run<'a>> {
     let mut paragraphs = Vec::new();
 
     if el.is_none() {
@@ -87,7 +90,7 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                 );
 
                 // last div on the citation block
-                let children = parse_recursive(el.child_elements().last().unwrap());
+                let children = parse_recursive(el.child_elements().last().unwrap(), true);
                 let children = children.into_iter().map(|c| {
                     c.property(
                         CharacterProperty::default().style_id(CharacterStyleId::from("citation")),
@@ -160,8 +163,11 @@ pub fn parse_html_to_docx_format<'a>(el: Option<ElementRef>) -> Vec<Run<'a>> {
                 }
             }
 
-            paragraphs.push(Run::default().push_text((" ", TextSpace::Preserve)));
-            for child in parse_recursive(el) {
+            if !last_element_is_citation {
+                paragraphs.push(Run::default().push_text((" ", TextSpace::Preserve)));
+            }
+
+            for child in parse_recursive(el, false) {
                 let mut cp = cp.clone();
                 if let Some(ref child_cp) = child.property {
                     cp = cp.merge(child_cp);

@@ -36,7 +36,7 @@ impl Into<Vec<Run<'_>>> for PostMessage {
             .next()
             .unwrap();
 
-        parse_recursive(container)
+        parse_recursive(container, false)
     }
 }
 
