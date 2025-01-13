@@ -140,14 +140,13 @@ pub fn parse_html_to_docx_format<'a>(
             }
 
             if properties.get("font-size").is_some() {
-                cp = cp.size(Size::from(
-                    properties
-                        .get("font-size")
-                        .unwrap()
-                        .trim_end_matches("px")
-                        .parse::<u8>()
-                        .unwrap(),
-                ));
+                let size = properties
+                    .get("font-size")
+                    .unwrap()
+                    .trim_end_matches("px")
+                    .parse::<u8>()
+                    .unwrap();
+                cp = cp.size(Size::from(size.lt(&15).then_some(16u8).unwrap_or(size)));
             }
 
             if properties.get("color").is_some() {
